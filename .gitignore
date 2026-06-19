@@ -4,6 +4,6 @@ __pycache__/
 state.json
 settings.json
 playwright-report/
-build/
+build/portable/
 dist/
 *.spec

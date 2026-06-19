@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$root = (Resolve-Path $PSScriptRoot).Path
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $python = Join-Path $root ".venv\Scripts\python.exe"
 $buildRoot = Join-Path $root "build\portable"
 $distRoot = Join-Path $root "dist"
@@ -87,7 +87,7 @@ if ($LASTEXITCODE -ne 0) {
 New-Item -ItemType Directory -Path $workerDir -Force | Out-Null
 Copy-Item -Path (Join-Path $workerDist "SkinWatcherWorker\*") -Destination $workerDir -Recurse -Force
 Copy-Item -LiteralPath $browserCache -Destination (Join-Path $portableDir "playwright-browsers") -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $root "PORTABLE_README.txt") -Destination $portableDir -Force
+Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination $portableDir -Force
 
 Write-Host "Creating portable ZIP..."
 Compress-Archive -Path $portableDir -DestinationPath $zipPath -CompressionLevel Optimal

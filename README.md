@@ -28,7 +28,7 @@ python main.py
 Run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build_portable.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\build_portable.ps1
 ```
 
 The build script creates `dist\SkinWatcher-portable.zip`. The archive includes
@@ -103,8 +103,9 @@ The app creates local runtime files:
 - `main.py`: single GUI entry point
 - `app/`: shared app modules for paths, settings, runtime config, models, and state
 - `assets/`: SkinWatcher window/taskbar icon assets
-- `app/gui/`: desktop GUI implementation
-- `app/watcher/`: internal watcher orchestration used by the GUI
+- `scripts/`: helper scripts, including portable Windows packaging
+- `app/gui/`: window layout, icon handling, skin editing, and watcher controls
+- `app/watcher/`: CLI loop, reusable browser session, and listing checks
 - `app/notify_discord/`: Discord webhook notification support
 - `app/cs2_resources/`: CS2 item lists and CS2-specific rule helpers
 - `app/utils/`: generic text/time helpers
