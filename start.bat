@@ -31,7 +31,7 @@ echo Installing/updating Playwright Chromium...
 if errorlevel 1 goto error
 
 echo Opening UI...
-".venv\Scripts\python.exe" gui.py
+".venv\Scripts\python.exe" main.py
 if errorlevel 1 goto error
 
 exit /b 0

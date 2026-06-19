@@ -5,7 +5,6 @@ import ctypes
 import subprocess
 import sys
 import threading
-from pathlib import Path
 from tkinter import (
     BooleanVar,
     Button,
@@ -14,6 +13,7 @@ from tkinter import (
     Frame,
     Label,
     Listbox,
+    Menu,
     PhotoImage,
     StringVar,
     Text,
@@ -22,94 +22,10 @@ from tkinter import (
 )
 from tkinter.ttk import Combobox, LabelFrame, Separator
 
-
-SETTINGS_PATH = Path("settings.json")
-PYTHON = Path(".venv") / "Scripts" / "python.exe"
-PIRATESWAP_URL = "https://pirateswap.com/exchanger"
-STATE_FILE = "state.json"
-CS2_WEAPONS = [
-    "AK-47",
-    "AUG",
-    "AWP",
-    "CZ75-Auto",
-    "Desert Eagle",
-    "Dual Berettas",
-    "FAMAS",
-    "Five-SeveN",
-    "G3SG1",
-    "Galil AR",
-    "Glock-18",
-    "M249",
-    "M4A1-S",
-    "M4A4",
-    "MAC-10",
-    "MAG-7",
-    "MP5-SD",
-    "MP7",
-    "MP9",
-    "Negev",
-    "Nova",
-    "P2000",
-    "P250",
-    "P90",
-    "PP-Bizon",
-    "R8 Revolver",
-    "Sawed-Off",
-    "SCAR-20",
-    "SG 553",
-    "SSG 08",
-    "Tec-9",
-    "UMP-45",
-    "USP-S",
-    "XM1014",
-]
-CS2_KNIVES = [
-    "Bayonet",
-    "Bowie Knife",
-    "Butterfly Knife",
-    "Classic Knife",
-    "Falchion Knife",
-    "Flip Knife",
-    "Gut Knife",
-    "Huntsman Knife",
-    "Karambit",
-    "Kukri Knife",
-    "M9 Bayonet",
-    "Navaja Knife",
-    "Nomad Knife",
-    "Paracord Knife",
-    "Shadow Daggers",
-    "Skeleton Knife",
-    "Stiletto Knife",
-    "Survival Knife",
-    "Talon Knife",
-    "Ursus Knife",
-]
-CS2_GLOVES = [
-    "Bloodhound Gloves",
-    "Broken Fang Gloves",
-    "Driver Gloves",
-    "Hand Wraps",
-    "Hydra Gloves",
-    "Moto Gloves",
-    "Specialist Gloves",
-    "Sport Gloves",
-]
-ITEM_TYPES = ["Weapon", "Knife", "Gloves"]
-
-
-def runtime_config() -> dict:
-    return {
-        "url": PIRATESWAP_URL,
-        "check_interval_seconds": 300,
-        "headless": True,
-        "state_file": STATE_FILE,
-        "notify": {
-            "type": "discord",
-            "webhook_url": "",
-        },
-        "skins": [],
-    }
+from app.cs2_resources.catalog import CS2_GLOVES, CS2_KNIVES, CS2_WEAPONS, ITEM_TYPES
+from app.paths import PIRATESWAP_URL, PYTHON, SETTINGS_PATH, STATE_FILE
+from app.runtime import runtime_config
+from app.settings import load_settings, save_settings
 
 
 def set_windows_app_id() -> None:
@@ -130,13 +46,17 @@ class PirateSwapGui:
         self.root.title("PirateSwap Skin Watcher")
         self.root.geometry("1120x720")
         self.root.minsize(980, 680)
+        self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
         self.icon = self.create_app_icon()
         self.root.iconphoto(True, self.icon)
         self.process: subprocess.Popen | None = None
         self.stop_requested = False
+        self.closing = False
 
-        self.settings = self.load_settings()
+        self.settings = load_settings(SETTINGS_PATH)
         self.config = runtime_config()
+        if self.settings.get("remember_skins"):
+            self.config["skins"] = self.settings.get("skins", [])
         self.reset_state_file()
 
         self.webhook_var = StringVar(
@@ -150,8 +70,11 @@ class PirateSwapGui:
         self.item_type_var = StringVar()
         self.weapon_var = StringVar()
         self.skin_var = StringVar()
-        self.stattrak_var = BooleanVar(value=True)
+        self.stattrak_var = BooleanVar(value=False)
+        self.notify_initial_var = BooleanVar(value=False)
+        self.remember_skins_var = BooleanVar(value=bool(self.settings.get("remember_skins", False)))
 
+        self.build_menu()
         self.build_ui()
         self.refresh_skin_list()
 
@@ -196,16 +119,23 @@ class PirateSwapGui:
                 icon.put(color, to=(x1, y1, x2, y2))
         return icon
 
-    def load_settings(self) -> dict:
-        if not SETTINGS_PATH.exists():
-            return {}
-        with SETTINGS_PATH.open("r", encoding="utf-8") as settings_file:
-            return json.load(settings_file)
-
     def reset_state_file(self) -> None:
-        with Path(STATE_FILE).open("w", encoding="utf-8") as state_file:
+        with open(STATE_FILE, "w", encoding="utf-8") as state_file:
             json.dump({"seen": {}, "baseline_done": False}, state_file, indent=2)
             state_file.write("\n")
+
+    def build_menu(self) -> None:
+        menu_bar = Menu(self.root)
+        options_menu = Menu(menu_bar, tearoff=False)
+        options_menu.add_checkbutton(
+            label="Notify about initial findings",
+            variable=self.notify_initial_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        menu_bar.add_cascade(label="Options", menu=options_menu)
+        menu_bar.add_command(label="Exit", command=self.exit_app)
+        self.root.config(menu=menu_bar)
 
     def build_ui(self) -> None:
         root = self.root
@@ -274,6 +204,15 @@ class PirateSwapGui:
         skins_frame.columnconfigure(1, weight=1)
         skins_frame.columnconfigure(2, weight=1)
 
+        remember_frame = Frame(root, padx=12)
+        remember_frame.pack(fill="x")
+        self.remember_skins_check = Checkbutton(
+            remember_frame,
+            text="Remember skins",
+            variable=self.remember_skins_var,
+        )
+        self.remember_skins_check.pack(anchor="w")
+
         self.skin_list = Listbox(root, height=8)
         self.skin_list.pack(fill="x", padx=12)
 
@@ -319,6 +258,7 @@ class PirateSwapGui:
         self.weapon_var.set("")
         self.weapon_combo.configure(values=[])
         self.skin_var.set("")
+        self.stattrak_var.set(False)
         self.stattrak_check.configure(state="normal")
         self.refresh_skin_list()
 
@@ -335,7 +275,6 @@ class PirateSwapGui:
             self.stattrak_var.set(False)
             self.stattrak_check.configure(state="disabled")
         elif item_type == "Weapon":
-            self.stattrak_var.set(True)
             self.stattrak_check.configure(state="normal")
         else:
             self.stattrak_check.configure(state="normal")
@@ -370,14 +309,14 @@ class PirateSwapGui:
 
         self.config["check_interval_seconds"] = interval
         self.config["headless"] = True
-        self.config.setdefault("notify", {})["type"] = "discord"
+        self.config.setdefault("notify", {})
         self.config["notify"]["webhook_url"] = self.webhook_var.get().strip()
         self.config["url"] = PIRATESWAP_URL
         self.config["headless"] = True
         self.config["state_file"] = STATE_FILE
         return self.config
 
-    def save_settings(self, require_skins: bool = False) -> bool:
+    def save_settings(self, require_skins: bool = False, log: bool = True) -> bool:
         try:
             config = self.current_config()
         except ValueError as exc:
@@ -388,18 +327,18 @@ class PirateSwapGui:
             messagebox.showerror("No Skins", "Add at least one skin before starting the watcher.")
             return False
 
-        with SETTINGS_PATH.open("w", encoding="utf-8") as settings_file:
-            json.dump(
-                {
-                    "discord_webhook_url": config["notify"]["webhook_url"],
-                    "check_interval_seconds": config["check_interval_seconds"],
-                },
-                settings_file,
-                indent=2,
-            )
-            settings_file.write("\n")
+        save_settings(
+            SETTINGS_PATH,
+            {
+                "discord_webhook_url": config["notify"]["webhook_url"],
+                "check_interval_seconds": config["check_interval_seconds"],
+                "remember_skins": bool(self.remember_skins_var.get()),
+                "skins": config.get("skins", []) if self.remember_skins_var.get() else [],
+            },
+        )
 
-        self.append_log("Settings saved.")
+        if log:
+            self.append_log("Settings saved.")
         return True
 
     def run_command(self, args: list[str]) -> None:
@@ -417,7 +356,13 @@ class PirateSwapGui:
             self.append_log("")
             self.append_log("==== Test Discord ====")
 
-        command = [str(PYTHON if PYTHON.exists() else sys.executable), "watcher.py", *args]
+        command = [
+            str(PYTHON if PYTHON.exists() else sys.executable),
+            "-u",
+            "-m",
+            "app.watcher.watcher",
+            *args,
+        ]
         if "--test-notify" not in args:
             command.extend(["--skins-json", json.dumps(self.config.get("skins", []))])
         threading.Thread(target=self.capture_process, args=(command, False), daemon=True).start()
@@ -429,12 +374,17 @@ class PirateSwapGui:
             messagebox.showinfo("Already Running", "Watcher is already running.")
             return
 
+        self.reset_state_file()
         command = [
             str(PYTHON if PYTHON.exists() else sys.executable),
-            "watcher.py",
+            "-u",
+            "-m",
+            "app.watcher.watcher",
             "--skins-json",
             json.dumps(self.config.get("skins", [])),
         ]
+        if self.notify_initial_var.get():
+            command.append("--notify-initial")
         self.stop_requested = False
         self.set_watching_state(True)
         self.append_log("")
@@ -451,6 +401,15 @@ class PirateSwapGui:
             self.append_log("Stopping watcher...")
         else:
             self.append_log("Watcher is not running.")
+
+    def exit_app(self) -> None:
+        if not self.save_settings(require_skins=False, log=False):
+            return
+        self.closing = True
+        if self.process and self.process.poll() is None:
+            self.stop_requested = True
+            self.process.terminate()
+        self.root.destroy()
 
     def capture_process(self, command: list[str], keep_process: bool) -> None:
         if "--test-notify" in command:
@@ -530,12 +489,15 @@ class PirateSwapGui:
         self.skin_entry.configure(state=state)
         self.add_button.configure(state=state)
         self.remove_button.configure(state=state)
+        self.remember_skins_check.configure(state=state)
         if watching or self.item_type_var.get() == "Gloves":
             self.stattrak_check.configure(state="disabled")
         else:
             self.stattrak_check.configure(state="normal")
 
     def append_log(self, text: str) -> None:
+        if self.closing:
+            return
         self.root.after(0, self._append_log, text)
 
     def _append_log(self, text: str) -> None:
