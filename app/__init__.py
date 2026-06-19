@@ -1,1 +1,1 @@
-"""Shared modules for the PirateSwap skin watcher."""
+"""Shared modules for the skin watcher."""

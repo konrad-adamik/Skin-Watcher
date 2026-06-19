@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import ctypes
+import os
 import subprocess
 import sys
 import threading
+from tkinter import font as tkfont
 from tkinter import (
     BooleanVar,
     Button,
@@ -12,18 +14,27 @@ from tkinter import (
     Entry,
     Frame,
     Label,
-    Listbox,
     Menu,
     PhotoImage,
     StringVar,
+    TclError,
     Text,
     Tk,
     messagebox,
 )
-from tkinter.ttk import Combobox, LabelFrame, Separator
+from tkinter.ttk import Combobox, LabelFrame, Separator, Style, Treeview
 
 from app.cs2_resources.catalog import CS2_GLOVES, CS2_KNIVES, CS2_WEAPONS, ITEM_TYPES
-from app.paths import PIRATESWAP_URL, PYTHON, SETTINGS_PATH, STATE_FILE
+from app.models import MAX_WATCHED_SKINS
+from app.paths import (
+    APP_ICON_ICO,
+    APP_ICON_PNG,
+    APP_HOME,
+    PIRATESWAP_URL,
+    PYTHON,
+    SETTINGS_PATH,
+    STATE_FILE,
+)
 from app.runtime import runtime_config
 from app.settings import load_settings, save_settings
 
@@ -34,28 +45,35 @@ def set_windows_app_id() -> None:
 
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            "PirateSwap.SkinWatcher"
+            "SkinWatcher"
         )
     except OSError:
         pass
 
 
-class PirateSwapGui:
+class SkinWatcherGui:
     def __init__(self, root: Tk) -> None:
         self.root = root
-        self.root.title("PirateSwap Skin Watcher")
+        self.root.title("Skin Watcher")
         self.root.geometry("1120x720")
         self.root.minsize(980, 680)
         self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
-        self.icon = self.create_app_icon()
+        self.icon = self.load_app_icon()
         self.root.iconphoto(True, self.icon)
+        if sys.platform == "win32" and APP_ICON_ICO.exists():
+            try:
+                self.root.iconbitmap(str(APP_ICON_ICO))
+            except TclError:
+                pass
         self.process: subprocess.Popen | None = None
         self.stop_requested = False
         self.closing = False
+        self.watching = False
+        self.editing_index: int | None = None
 
         self.settings = load_settings(SETTINGS_PATH)
         self.config = runtime_config()
-        if self.settings.get("remember_skins"):
+        if self.settings.get("remember_skins", True):
             self.config["skins"] = self.settings.get("skins", [])
         self.reset_state_file()
 
@@ -71,14 +89,26 @@ class PirateSwapGui:
         self.weapon_var = StringVar()
         self.skin_var = StringVar()
         self.stattrak_var = BooleanVar(value=False)
+        self.float_min_var = StringVar()
+        self.float_max_var = StringVar()
         self.notify_initial_var = BooleanVar(value=False)
-        self.remember_skins_var = BooleanVar(value=bool(self.settings.get("remember_skins", False)))
+        self.remember_skins_var = BooleanVar(
+            value=bool(self.settings.get("remember_skins", True))
+        )
 
         self.build_menu()
         self.build_ui()
         self.refresh_skin_list()
 
-    def create_app_icon(self) -> PhotoImage:
+    def load_app_icon(self) -> PhotoImage:
+        if APP_ICON_PNG.exists():
+            try:
+                return PhotoImage(file=str(APP_ICON_PNG))
+            except TclError:
+                pass
+        return self.create_fallback_icon()
+
+    def create_fallback_icon(self) -> PhotoImage:
         icon = PhotoImage(width=32, height=32)
         transparent = "#f0f0f0"
         icon.put(transparent, to=(0, 0, 32, 32))
@@ -128,6 +158,13 @@ class PirateSwapGui:
         menu_bar = Menu(self.root)
         options_menu = Menu(menu_bar, tearoff=False)
         options_menu.add_checkbutton(
+            label="Remember skins",
+            variable=self.remember_skins_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        options_menu.add_separator()
+        options_menu.add_checkbutton(
             label="Notify about initial findings",
             variable=self.notify_initial_var,
             onvalue=True,
@@ -160,9 +197,9 @@ class PirateSwapGui:
 
         Separator(root).pack(fill="x", padx=12, pady=4)
 
-        skins_outer = LabelFrame(root, text="Skins To Watch")
-        skins_outer.pack(fill="x", padx=12, pady=8)
-        skins_frame = Frame(skins_outer, padx=12, pady=10)
+        self.skins_outer = LabelFrame(root, text=f"Skins To Watch (0/{MAX_WATCHED_SKINS})")
+        self.skins_outer.pack(fill="x", padx=12, pady=8)
+        skins_frame = Frame(self.skins_outer, padx=12, pady=10)
         skins_frame.pack(fill="x")
 
         Label(skins_frame, text="Type").grid(row=0, column=0, sticky="w")
@@ -197,24 +234,82 @@ class PirateSwapGui:
         self.stattrak_check.grid(row=1, column=3, padx=8)
         self.add_button = Button(skins_frame, text="Add Skin", command=self.add_skin)
         self.add_button.grid(row=1, column=4, padx=(0, 8))
-        self.remove_button = Button(skins_frame, text="Remove Selected", command=self.remove_selected_skin)
-        self.remove_button.grid(row=1, column=5)
+        self.edit_button = Button(
+            skins_frame,
+            text="Edit Selected",
+            command=self.toggle_edit_selected_skin,
+            state="disabled",
+        )
+        self.edit_button.grid(row=1, column=5, padx=(0, 8))
+        self.remove_button = Button(
+            skins_frame,
+            text="Remove Selected",
+            command=self.remove_selected_skin,
+            state="disabled",
+        )
+        self.remove_button.grid(row=1, column=6)
+
+        self.float_filter_frame = Frame(skins_frame)
+        self.float_filter_frame.grid(
+            row=2,
+            column=0,
+            columnspan=7,
+            sticky="w",
+            pady=(8, 0),
+        )
+        Label(
+            self.float_filter_frame,
+            text="Float range (optional, max 3 decimals)",
+        ).pack(side="left")
+        Label(self.float_filter_frame, text="min").pack(side="left", padx=(10, 3))
+        self.float_min_entry = Entry(
+            self.float_filter_frame,
+            textvariable=self.float_min_var,
+            width=9,
+        )
+        self.float_min_entry.pack(side="left")
+        Label(self.float_filter_frame, text="max").pack(side="left", padx=(8, 3))
+        self.float_max_entry = Entry(
+            self.float_filter_frame,
+            textvariable=self.float_max_var,
+            width=9,
+        )
+        self.float_max_entry.pack(side="left")
 
         skins_frame.columnconfigure(0, weight=1)
         skins_frame.columnconfigure(1, weight=1)
         skins_frame.columnconfigure(2, weight=1)
 
-        remember_frame = Frame(root, padx=12)
-        remember_frame.pack(fill="x")
-        self.remember_skins_check = Checkbutton(
-            remember_frame,
-            text="Remember skins",
-            variable=self.remember_skins_var,
+        self.table_heading_font = tkfont.nametofont("TkDefaultFont").copy()
+        self.table_heading_font.configure(weight="bold")
+        table_style = Style(root)
+        table_style.configure("SkinWatcher.Treeview", rowheight=30)
+        table_style.configure(
+            "SkinWatcher.Treeview.Heading",
+            font=self.table_heading_font,
         )
-        self.remember_skins_check.pack(anchor="w")
-
-        self.skin_list = Listbox(root, height=8)
-        self.skin_list.pack(fill="x", padx=12)
+        self.skin_list = Treeview(
+            self.skins_outer,
+            columns=("type", "item", "skin", "stattrak", "float"),
+            show="headings",
+            height=3,
+            selectmode="browse",
+            style="SkinWatcher.Treeview",
+        )
+        for column, heading, width in (
+            ("type", "Type", 100),
+            ("item", "Item", 210),
+            ("skin", "Skin", 260),
+            ("stattrak", "StatTrak", 110),
+            ("float", "Float Range", 150),
+        ):
+            self.skin_list.heading(column, text=heading, anchor="w")
+            self.skin_list.column(column, width=width, minwidth=80, anchor="w")
+        self.skin_list.tag_configure("even", background="#f7f8fa")
+        self.skin_list.tag_configure("odd", background="#e4e9ef")
+        self.skin_list.pack(fill="x", padx=12, pady=(0, 10))
+        self.skin_list.bind("<Button-1>", self.toggle_skin_selection)
+        self.skin_list.bind("<<TreeviewSelect>>", self.on_skin_selection_changed)
 
         controls = Frame(root, padx=12, pady=10)
         controls.pack(fill="x")
@@ -228,17 +323,87 @@ class PirateSwapGui:
         self.log.pack(fill="both", expand=True, padx=12, pady=(0, 12))
 
     def refresh_skin_list(self) -> None:
-        self.skin_list.delete(0, "end")
-        for skin in self.config.get("skins", []):
-            stattrak = "StatTrak" if skin.get("stattrak") else "Regular"
-            name = skin.get("name") or f"{skin.get('weapon', '')} | {skin.get('skin', '')}"
-            item_type = skin.get("type", self.item_type_for_weapon(skin.get("weapon", "")))
+        rows = self.skin_list.get_children()
+        if rows:
+            self.skin_list.delete(*rows)
+
+        skins = self.config.get("skins", [])
+        for index, entry in enumerate(skins):
+            weapon = entry.get("weapon", "")
+            skin = entry.get("skin", "")
+            legacy_name = entry.get("name", "")
+            if legacy_name and (not weapon or not skin) and "|" in legacy_name:
+                legacy_weapon, legacy_skin = legacy_name.split("|", 1)
+                weapon = weapon or legacy_weapon.strip()
+                skin = skin or legacy_skin.strip()
+            item_type = entry.get("type") or self.item_type_for_weapon(weapon)
+            stattrak = "Yes" if entry.get("stattrak") else "No"
             self.skin_list.insert(
+                "",
                 "end",
-                f"{item_type}: {name} | {stattrak}",
+                iid=str(index),
+                tags=("even" if index % 2 == 0 else "odd",),
+                values=(
+                    item_type,
+                    weapon,
+                    skin,
+                    stattrak,
+                    self.describe_float_filter(entry),
+                ),
             )
+        self.skins_outer.configure(
+            text=f"Skins To Watch ({len(skins)}/{MAX_WATCHED_SKINS})"
+        )
+        self.update_skin_action_buttons()
+
+    @staticmethod
+    def describe_float_filter(entry: dict) -> str:
+        lower = entry.get("float_min")
+        upper = entry.get("float_max")
+        if lower is None and upper is None:
+            return "Any"
+        if lower is None:
+            return f"≤ {upper:.3f}"
+        if upper is None:
+            return f"≥ {lower:.3f}"
+        return f"{lower:.3f} - {upper:.3f}"
+
+    def toggle_skin_selection(self, event):
+        row_id = self.skin_list.identify_row(event.y)
+        if not row_id:
+            return None
+        if row_id in self.skin_list.selection():
+            self.skin_list.selection_remove(row_id)
+            self.update_skin_action_buttons()
+            return "break"
+
+        self.root.after_idle(self.update_skin_action_buttons)
+        return None
+
+    def on_skin_selection_changed(self, _event=None) -> None:
+        self.update_skin_action_buttons()
+
+    def update_skin_action_buttons(self) -> None:
+        has_selection = bool(self.skin_list.selection())
+        edit_enabled = self.editing_index is not None or has_selection
+        self.edit_button.configure(
+            state="normal" if edit_enabled and not self.watching else "disabled"
+        )
+        self.remove_button.configure(
+            state="normal" if has_selection and not self.watching else "disabled"
+        )
 
     def add_skin(self) -> None:
+        if (
+            self.editing_index is None
+            and len(self.config.setdefault("skins", [])) >= MAX_WATCHED_SKINS
+        ):
+            messagebox.showerror(
+                "Watch Limit",
+                f"You can watch at most {MAX_WATCHED_SKINS} entries at once.",
+            )
+            return
+
         item_type = self.item_type_var.get().strip()
         weapon = self.weapon_var.get().strip()
         skin = self.skin_var.get().strip()
@@ -246,21 +411,124 @@ class PirateSwapGui:
             messagebox.showerror("Missing Skin", "Select type and item, then enter skin name.")
             return
 
-        self.config.setdefault("skins", []).append(
-            {
-                "type": item_type,
-                "weapon": weapon,
-                "skin": skin,
-                "stattrak": bool(self.stattrak_var.get()),
-            }
-        )
+        try:
+            float_min, float_max = self.read_float_filter()
+        except ValueError as exc:
+            messagebox.showerror("Invalid Float Range", str(exc))
+            return
+
+        entry = {
+            "type": item_type,
+            "weapon": weapon,
+            "skin": skin,
+            "stattrak": bool(self.stattrak_var.get()),
+        }
+        if float_min is not None:
+            entry["float_min"] = float_min
+        if float_max is not None:
+            entry["float_max"] = float_max
+        if self.editing_index is None:
+            self.config["skins"].append(entry)
+        else:
+            self.config["skins"][self.editing_index] = entry
+
+        self.refresh_skin_list()
+        self.cancel_edit()
+
+    def reset_skin_form(self) -> None:
         self.item_type_var.set("")
         self.weapon_var.set("")
         self.weapon_combo.configure(values=[])
         self.skin_var.set("")
         self.stattrak_var.set(False)
+        self.float_min_var.set("")
+        self.float_max_var.set("")
         self.stattrak_check.configure(state="normal")
-        self.refresh_skin_list()
+
+    def toggle_edit_selected_skin(self) -> None:
+        if self.editing_index is None:
+            self.edit_selected_skin()
+        else:
+            self.cancel_edit()
+
+    def edit_selected_skin(self, _event=None) -> None:
+        selection = self.skin_list.selection()
+        if not selection:
+            return
+
+        index = int(selection[0])
+        entry = self.config.get("skins", [])[index]
+        weapon = entry.get("weapon", "")
+        skin = entry.get("skin", "")
+        legacy_name = entry.get("name", "")
+        if legacy_name and (not weapon or not skin) and "|" in legacy_name:
+            legacy_weapon, legacy_skin = legacy_name.split("|", 1)
+            weapon = weapon or legacy_weapon.strip()
+            skin = skin or legacy_skin.strip()
+
+        item_type = entry.get("type") or self.item_type_for_weapon(weapon)
+        item_values = {
+            "Weapon": CS2_WEAPONS,
+            "Knife": CS2_KNIVES,
+            "Gloves": CS2_GLOVES,
+        }.get(item_type, [])
+
+        self.editing_index = index
+        self.item_type_var.set(item_type)
+        self.weapon_combo.configure(values=item_values)
+        self.weapon_var.set(weapon)
+        self.skin_var.set(skin)
+        self.stattrak_var.set(bool(entry.get("stattrak")))
+        self.float_min_var.set(self.format_float_input(entry.get("float_min")))
+        self.float_max_var.set(self.format_float_input(entry.get("float_max")))
+        self.stattrak_check.configure(
+            state="disabled" if item_type == "Gloves" else "normal"
+        )
+        self.add_button.configure(text="Save Changes")
+        self.edit_button.configure(text="Cancel Edit")
+        self.update_skin_action_buttons()
+
+    @staticmethod
+    def format_float_input(value) -> str:
+        if value is None:
+            return ""
+        return f"{float(value):.3f}".rstrip("0").rstrip(".")
+
+    def cancel_edit(self) -> None:
+        self.editing_index = None
+        self.add_button.configure(text="Add Skin")
+        self.edit_button.configure(text="Edit Selected")
+        selection = self.skin_list.selection()
+        if selection:
+            self.skin_list.selection_remove(*selection)
+        self.reset_skin_form()
+        self.update_skin_action_buttons()
+
+    def read_float_filter(self) -> tuple[float | None, float | None]:
+        values: list[float | None] = []
+        for label, raw in (
+            ("Minimum float", self.float_min_var.get().strip()),
+            ("Maximum float", self.float_max_var.get().strip()),
+        ):
+            if not raw:
+                values.append(None)
+                continue
+            normalized = raw.replace(",", ".")
+            decimal_part = normalized.split(".", 1)[1] if "." in normalized else ""
+            if len(decimal_part) > 3:
+                raise ValueError(f"{label} can have at most 3 decimal places.")
+            try:
+                value = float(normalized)
+            except ValueError as exc:
+                raise ValueError(f"{label} must be a number between 0 and 1.") from exc
+            if not 0 <= value <= 1:
+                raise ValueError(f"{label} must be between 0 and 1.")
+            values.append(value)
+
+        float_min, float_max = values
+        if float_min is not None and float_max is not None and float_min > float_max:
+            raise ValueError("Minimum float cannot be greater than maximum float.")
+        return float_min, float_max
 
     def on_item_type_selected(self, _event=None) -> None:
         item_type = self.item_type_var.get()
@@ -292,11 +560,12 @@ class PirateSwapGui:
         return "Weapon"
 
     def remove_selected_skin(self) -> None:
-        selection = self.skin_list.curselection()
+        selection = self.skin_list.selection()
         if not selection:
             return
-        del self.config["skins"][selection[0]]
+        del self.config["skins"][int(selection[0])]
         self.refresh_skin_list()
+        self.cancel_edit()
 
     def current_config(self) -> dict:
         try:
@@ -325,6 +594,12 @@ class PirateSwapGui:
 
         if require_skins and not config.get("skins"):
             messagebox.showerror("No Skins", "Add at least one skin before starting the watcher.")
+            return False
+        if require_skins and len(config.get("skins", [])) > MAX_WATCHED_SKINS:
+            messagebox.showerror(
+                "Watch Limit",
+                f"Remove entries until no more than {MAX_WATCHED_SKINS} remain.",
+            )
             return False
 
         save_settings(
@@ -356,13 +631,7 @@ class PirateSwapGui:
             self.append_log("")
             self.append_log("==== Test Discord ====")
 
-        command = [
-            str(PYTHON if PYTHON.exists() else sys.executable),
-            "-u",
-            "-m",
-            "app.watcher.watcher",
-            *args,
-        ]
+        command = self.watcher_command(args)
         if "--test-notify" not in args:
             command.extend(["--skins-json", json.dumps(self.config.get("skins", []))])
         threading.Thread(target=self.capture_process, args=(command, False), daemon=True).start()
@@ -375,14 +644,10 @@ class PirateSwapGui:
             return
 
         self.reset_state_file()
-        command = [
-            str(PYTHON if PYTHON.exists() else sys.executable),
-            "-u",
-            "-m",
-            "app.watcher.watcher",
+        command = self.watcher_command([
             "--skins-json",
             json.dumps(self.config.get("skins", [])),
-        ]
+        ])
         if self.notify_initial_var.get():
             command.append("--notify-initial")
         self.stop_requested = False
@@ -390,6 +655,18 @@ class PirateSwapGui:
         self.append_log("")
         self.append_log("==== Start Watching ====")
         threading.Thread(target=self.capture_process, args=(command, True), daemon=True).start()
+
+    def watcher_command(self, args: list[str]) -> list[str]:
+        if getattr(sys, "frozen", False):
+            worker = APP_HOME / "worker" / "SkinWatcherWorker.exe"
+            return [str(worker), *args]
+        return [
+            str(PYTHON if PYTHON.exists() else sys.executable),
+            "-u",
+            "-m",
+            "app.watcher.watcher",
+            *args,
+        ]
 
     def stop_watching(self) -> None:
         if self.process and self.process.poll() is None:
@@ -416,6 +693,15 @@ class PirateSwapGui:
             self.append_log("Sending a test message to Discord...")
         else:
             self.append_log("Watcher started." if keep_process else "Running watcher command...")
+        process_options = {}
+        if getattr(sys, "frozen", False):
+            environment = os.environ.copy()
+            environment["SKINWATCHER_HOME"] = str(APP_HOME)
+            process_options.update(
+                cwd=APP_HOME,
+                env=environment,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
         self.process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -423,6 +709,7 @@ class PirateSwapGui:
             text=True,
             encoding="utf-8",
             errors="replace",
+            **process_options,
         )
 
         assert self.process.stdout is not None
@@ -473,6 +760,7 @@ class PirateSwapGui:
         self.root.after(0, self._set_watching_state, watching)
 
     def _set_watching_state(self, watching: bool) -> None:
+        self.watching = watching
         if watching:
             self.start_button.pack_forget()
             self.stop_button.configure(state="normal")
@@ -487,9 +775,10 @@ class PirateSwapGui:
         self.item_type_combo.configure(state="disabled" if watching else "readonly")
         self.weapon_combo.configure(state="disabled" if watching else "readonly")
         self.skin_entry.configure(state=state)
+        self.float_min_entry.configure(state=state)
+        self.float_max_entry.configure(state=state)
         self.add_button.configure(state=state)
-        self.remove_button.configure(state=state)
-        self.remember_skins_check.configure(state=state)
+        self.update_skin_action_buttons()
         if watching or self.item_type_var.get() == "Gloves":
             self.stattrak_check.configure(state="disabled")
         else:
@@ -508,7 +797,7 @@ class PirateSwapGui:
 def main() -> None:
     set_windows_app_id()
     root = Tk()
-    PirateSwapGui(root)
+    SkinWatcherGui(root)
     root.mainloop()
 
 

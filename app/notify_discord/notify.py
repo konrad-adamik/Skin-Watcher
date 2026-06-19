@@ -30,7 +30,7 @@ def notify(
     response = requests.post(
         webhook_url,
         json={
-            "username": "Skins availability watcher",
+            "username": "Skin Watcher",
             "embeds": [embed],
         },
         timeout=20,

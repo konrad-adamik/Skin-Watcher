@@ -53,3 +53,21 @@ def stattrak_matches(rule: SkinRule, text: str) -> bool:
     has_stattrak = "stattrak" in normalized or "stat trak" in normalized
 
     return has_stattrak if rule.stattrak else not has_stattrak
+
+
+def float_matches(rule: SkinRule, value: str | float | None) -> bool:
+    if rule.float_min is None and rule.float_max is None:
+        return True
+    if value is None:
+        return False
+
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return False
+
+    if rule.float_min is not None and parsed < rule.float_min:
+        return False
+    if rule.float_max is not None and parsed > rule.float_max:
+        return False
+    return True

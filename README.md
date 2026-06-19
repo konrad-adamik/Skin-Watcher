@@ -1,6 +1,6 @@
-# PirateSwap Skin Watcher
+# Skin Watcher
 
-Local Windows UI for watching PirateSwap CS2 listings and sending Discord alerts when a newly appearing watched skin is found.
+Local Windows UI for watching CS2 listings and sending Discord alerts when a newly appearing watched skin is found.
 
 ## Start
 
@@ -23,6 +23,36 @@ For direct use without the batch launcher:
 python main.py
 ```
 
+## Portable Windows Build
+
+Run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_portable.ps1
+```
+
+The build script creates `dist\SkinWatcher-portable.zip`. The archive includes
+the application, its Python runtime, the hidden watcher worker, and Chromium.
+The receiving Windows computer does not need Python installed; extract the
+whole folder and run `SkinWatcher.exe`.
+
+### GitHub builds
+
+The `Build portable Windows release` workflow builds the same ZIP on a GitHub
+Windows runner:
+
+- Run it manually from the repository's `Actions` tab to download a workflow
+  artifact.
+- Push a version tag to publish the ZIP permanently on the `Releases` page:
+
+```text
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+For a public repository, friends can download the tagged release without
+installing Python or using the Actions interface.
+
 ## UI Flow
 
 1. Paste your Discord webhook URL.
@@ -32,8 +62,16 @@ python main.py
    - choose `Type`: `Weapon`, `Knife`, or `Gloves`
    - choose the item from the dependent dropdown
    - enter the skin name
+   - optionally set an inclusive minimum and/or maximum float for any item type;
+     both `.` and `,` decimal separators are accepted, with up to three decimals
    - enable `StatTrak` if applicable
-5. Optionally check `Remember skins` to load the same watched skins next time.
+   - add up to three entries
+   - select an existing entry and click `Edit Selected` to update it without
+     consuming another slot
+   - the watched-skins table shows the current capacity as `n/3` and separates
+     item details into columns
+5. `Options > Remember skins` is enabled by default; disable it if the watch
+   list should be session-only.
 6. Click `Start Watching`.
 
 Use `Exit` in the menu bar or the window close button to save current settings before closing.
@@ -64,6 +102,7 @@ The app creates local runtime files:
 - `state.json`: generated/reset by the UI, used for baseline/new-listing comparison
 - `main.py`: single GUI entry point
 - `app/`: shared app modules for paths, settings, runtime config, models, and state
+- `assets/`: SkinWatcher window/taskbar icon assets
 - `app/gui/`: desktop GUI implementation
 - `app/watcher/`: internal watcher orchestration used by the GUI
 - `app/notify_discord/`: Discord webhook notification support
@@ -78,6 +117,7 @@ These are local machine files and are ignored by git.
 
 - PirateSwap URL is fixed in code.
 - Browser automation always runs hidden.
+- A single browser connection is reused across checks and automatically recreated after a failure.
 - Skins to watch are session-only unless `Remember skins` is checked.
 - `state.json` always uses the project folder.
 - Gloves automatically disable StatTrak.

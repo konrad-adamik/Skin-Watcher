@@ -7,7 +7,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from app.models import SkinMatch, SkinRule
-from app.cs2_resources.rules import is_glove, is_knife, stattrak_matches
+from app.cs2_resources.rules import float_matches, is_glove, is_knife, stattrak_matches
 from app.utils.text import (
     clean_display_text,
     full_skin_name,
@@ -115,9 +115,74 @@ def extract_cards(page, selected_label: str) -> list[dict]:
             return (text || "").replace(/\\s+/g, " ").trim();
           }
 
+          function findReactItemDetails(card) {
+            const roots = [];
+            for (const key of Object.keys(card)) {
+              if (key.startsWith("__reactProps$")) {
+                roots.push(card[key]);
+              } else if (
+                key.startsWith("__reactFiber$") ||
+                key.startsWith("__reactInternalInstance$")
+              ) {
+                roots.push(card[key]?.pendingProps, card[key]?.memoizedProps);
+              }
+            }
+
+            const seen = new WeakSet();
+            function visit(value, depth = 0) {
+              if (!value || typeof value !== "object" || depth > 8 || seen.has(value)) {
+                return null;
+              }
+              seen.add(value);
+
+              const exterior = compact(value.exterior).toUpperCase();
+              const floatValue = Number(value.float);
+              if (
+                /^(FN|MW|FT|WW|BS)$/.test(exterior) &&
+                value.float !== "" &&
+                value.float !== null &&
+                value.float !== undefined &&
+                Number.isFinite(floatValue) &&
+                floatValue >= 0 &&
+                floatValue <= 1
+              ) {
+                return {
+                  exterior,
+                  float: floatValue,
+                  name: compact(value.name),
+                };
+              }
+
+              const entries = Array.isArray(value)
+                ? value
+                : Object.entries(value)
+                    .filter(([key]) => ![
+                      "_owner",
+                      "alternate",
+                      "child",
+                      "return",
+                      "sibling",
+                      "stateNode",
+                    ].includes(key))
+                    .map(([, child]) => child);
+              for (const child of entries) {
+                const match = visit(child, depth + 1);
+                if (match) return match;
+              }
+              return null;
+            }
+
+            for (const root of roots) {
+              const match = visit(root);
+              if (match) return match;
+            }
+            return null;
+          }
+
           return els.map((card, index) => {
             const nameNode = card.querySelector("[data-testid='skin-card-name']");
-            const name = compact(nameNode?.innerText || nameNode?.textContent);
+            const reactDetails = findReactItemDetails(card);
+            const name = compact(nameNode?.innerText || nameNode?.textContent) || reactDetails?.name || "";
             const nameAreaText = compact(nameNode?.parentElement?.textContent);
             const cardText = compact(card.textContent || card.innerText);
             const normalizedCardText = cardText.replace(/[\\u2010-\\u2015\\u2212]/g, "-");
@@ -141,25 +206,33 @@ def extract_cards(page, selected_label: str) -> list[dict]:
             const rawFloatMatch = searchableText.match(/\\bfloat\\b\\s*(?:-|:)?\\s*(0?\\.\\d+|1(?:\\.0+)?)/i);
             const details = floatMatch
               ? `${floatMatch[1].toUpperCase()} - ${floatMatch[2]}`
-              : rawFloatMatch
-                ? rawFloatMatch[1]
-                : "";
-            const lock = paragraphs.find((text) => /^\\d+D$/.test(text)) || "";
+              : reactDetails
+                ? reactDetails.exterior + " - " + reactDetails.float.toFixed(4)
+                : rawFloatMatch
+                  ? rawFloatMatch[1]
+                  : "";
+            const identityFloat = reactDetails
+              ? String(reactDetails.float)
+              : floatMatch
+                ? floatMatch[2]
+                : rawFloatMatch
+                  ? rawFloatMatch[1]
+                  : "";
             const image = card.querySelector("img[alt]");
-            const imageAlt = image?.getAttribute("alt") || "";
             const imageSrc = image?.currentSrc || image?.getAttribute("src") || "";
             const imageUrl = imageSrc ? new URL(imageSrc, window.location.origin).href : "";
-            const debugText = !details ? normalizedCardText.slice(0, 180) : "";
 
             if (!name && !price && !details) return "";
             return {
               text: `${selectedLabel}\\n### Float: ${details || "no float"}`,
-              identity_text: `${selectedLabel} | card=${index + 1} | lock=${lock || "no lock"} | float=${details || "no float"} | price=${price || "no price"} | image=${imageAlt}${debugText ? ` | raw=${debugText}` : ""}`,
+              identity_text: `${selectedLabel} | float=${identityFloat || "no float"}`,
+              float_value: identityFloat || null,
               image_url: imageUrl,
               debug: {
                 index: index + 1,
                 name,
                 details: details || "no float",
+                exact_float: identityFloat || "no float",
                 price: price || "no price",
                 text: normalizedCardText.slice(0, 220),
               },
@@ -192,10 +265,25 @@ def search_for_skin(page, rule: SkinRule) -> list[SkinMatch]:
             f"[{timestamp()}] card {debug.get('index')}: "
             f"name={debug.get('name') or 'unknown'} | "
             f"float={debug.get('details')} | "
+            f"exact float={debug.get('exact_float')} | "
             f"price={debug.get('price')}"
         )
         if debug.get("details") == "no float":
             print(f"[{timestamp()}] card {debug.get('index')} raw text: {debug.get('text')}")
+
+    matching_cards = [
+        card
+        for card in cards
+        if stattrak_matches(rule, selected_label)
+        and float_matches(rule, card.get("float_value"))
+    ]
+    if rule.float_min is not None or rule.float_max is not None:
+        print(
+            f"[{timestamp()}] float filter "
+            f"{rule.float_min if rule.float_min is not None else 0.0:.3f}-"
+            f"{rule.float_max if rule.float_max is not None else 1.0:.3f}: "
+            f"{len(matching_cards)} of {len(cards)} card(s) matched"
+        )
 
     return [
         SkinMatch(
@@ -203,6 +291,5 @@ def search_for_skin(page, rule: SkinRule) -> list[SkinMatch]:
             identity_text=normalize_text(card["identity_text"]),
             image_url=card.get("image_url"),
         )
-        for card in cards
-        if stattrak_matches(rule, selected_label)
+        for card in matching_cards
     ]

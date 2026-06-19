@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-echo PirateSwap Skin Watcher
+echo Skin Watcher
 echo =======================
 echo.
 
