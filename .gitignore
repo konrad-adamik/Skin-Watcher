@@ -1,9 +1,5 @@
-.venv/
-__pycache__/
-*.pyc
-state.json
-settings.json
-playwright-report/
-build/portable/
-dist/
-*.spec
+*.crx
+*.pem
+*.zip
+.DS_Store
+.skin-watcher-profile*/

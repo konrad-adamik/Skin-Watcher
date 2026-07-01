@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Skin Watcher</title>
+    <link rel="stylesheet" href="dashboard.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div class="brand">
+          <img src="assets/skinwatcher.png" alt="" width="52" height="52">
+          <div>
+            <h1>Skin Watcher</h1>
+            <p>Chrome extension</p>
+          </div>
+        </div>
+      </header>
+
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+      <section class="panel options-panel collapsible-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="panel-title-row">
+              <button class="collapse-toggle" type="button" aria-expanded="true" aria-controls="optionsBody" data-collapse-target="optionsBody">
+                <span class="collapse-arrow">▾</span>
+                <span class="sr-only">Toggle options</span>
+              </button>
+              <h2>Options</h2>
+            </div>
+            <p>Configure Discord notifications and the automatic check interval.</p>
+          </div>
+          <button class="collapse-toggle" type="button" aria-expanded="true" aria-controls="optionsBody" data-collapse-target="optionsBody">
+            <span class="collapse-arrow">▾</span>
+            <span class="sr-only">Toggle options</span>
+          </button>
+        </div>
+        <div id="optionsBody" class="settings-grid collapsible-body">
+          <div class="field webhook-field">
+            <label for="webhook">Discord webhook URL</label>
+            <div class="input-action">
+              <input id="webhook" type="password" autocomplete="off" placeholder="https://discord.com/api/webhooks/…">
+              <button id="testDiscord" class="button secondary" type="button">Test Discord</button>
+            </div>
+            <small class="field-hint">Required before watching. Use Test Discord to verify it.</small>
+          </div>
+          <div class="field compact-field">
+            <label for="interval">Check every</label>
+            <div class="suffix-input">
+              <input id="interval" type="number" min="30" step="1">
+              <span>seconds</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel sites-panel collapsible-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="panel-title-row">
+              <button class="collapse-toggle" type="button" aria-expanded="true" aria-controls="sitesBody" data-collapse-target="sitesBody">
+                <span class="collapse-arrow">▾</span>
+                <span class="sr-only">Toggle sites</span>
+              </button>
+              <h2>Sites to check</h2>
+            </div>
+            <p>Site tabs stay in this dashboard's Chrome window and activate briefly while checked.</p>
+          </div>
+          <button class="collapse-toggle" type="button" aria-expanded="true" aria-controls="sitesBody" data-collapse-target="sitesBody">
+            <span class="collapse-arrow">▾</span>
+            <span class="sr-only">Toggle sites</span>
+          </button>
+        </div>
+        <div id="sitesBody" class="checkbox-row collapsible-body">
+          <label class="check-card">
+            <input id="sitePirateswap" type="checkbox">
+            <span><strong>PirateSwap</strong><small><a href="https://pirateswap.com/exchanger" target="_blank" rel="noopener noreferrer">pirateswap.com/exchanger</a></small></span>
+          </label>
+          <label class="check-card">
+            <input id="siteSkinsmonkey" type="checkbox">
+            <span>
+              <strong>SkinsMonkey</strong>
+              <small><a href="https://skinsmonkey.com/trade" target="_blank" rel="noopener noreferrer">skinsmonkey.com/trade</a></small>
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2 id="skinsHeading">Skins to watch (0/3)</h2>
+            <p>Float limits are inclusive and optional.</p>
+          </div>
+        </div>
+
+        <div class="skin-form">
+          <div class="field">
+            <label for="skinType">Type</label>
+            <select id="skinType">
+              <option value="">Select type</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="skinItem">Item</label>
+            <select id="skinItem" disabled>
+              <option value="">Select item</option>
+            </select>
+          </div>
+          <div class="field skin-name-field">
+            <label for="skinName">Skin</label>
+            <input id="skinName" type="text" placeholder="e.g. Cyrex">
+          </div>
+          <label class="inline-check stattrak-check">
+            <input id="stattrak" type="checkbox">
+            StatTrak
+          </label>
+          <div class="field float-field">
+            <label for="floatMin">Minimum float</label>
+            <input id="floatMin" type="text" inputmode="decimal" placeholder="0.000">
+          </div>
+          <div class="field float-field">
+            <label for="floatMax">Maximum float</label>
+            <input id="floatMax" type="text" inputmode="decimal" placeholder="1.000">
+          </div>
+          <div class="form-actions">
+            <button id="addSkin" class="button" type="button">Add skin</button>
+            <button id="cancelEdit" class="button ghost" type="button" hidden>Cancel</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Type</th><th>Item</th><th>Skin</th><th>StatTrak</th><th>Float</th><th></th></tr>
+            </thead>
+            <tbody id="skinRows"></tbody>
+          </table>
+          <p id="emptySkins" class="empty-state">No skins added yet.</p>
+        </div>
+      </section>
+
+      <section class="control-bar">
+        <div class="control-actions">
+          <button id="startWatching" class="button primary" type="button">Start watching</button>
+          <button id="stopWatching" class="button danger" type="button" hidden>Stop watching</button>
+        </div>
+        <p>Chrome must remain running. Add the trade sites to Chrome’s Memory Saver exception list.</p>
+      </section>
+
+      <section class="panel activity-panel">
+        <div class="panel-heading activity-heading">
+          <h2>Activity</h2>
+          <div class="activity-status-bar">
+            <span id="pirateswapStatus" class="site-status">PirateSwap: idle</span>
+            <span id="skinsmonkeyStatus" class="site-status">SkinsMonkey: idle</span>
+          </div>
+        </div>
+        <pre id="activityLog">No activity yet.</pre>
+      </section>
+    </main>
+
+    <script src="resources/catalog.js"></script>
+    <script src="src/common.js"></script>
+    <script src="src/dashboard.js"></script>
+  </body>
+</html>

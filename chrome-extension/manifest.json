@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Skin Watcher",
+  "version": "2.0.0",
+  "description": "Watch PirateSwap and SkinsMonkey CS2 inventory and send Discord alerts.",
+  "permissions": [
+    "alarms",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://pirateswap.com/*",
+    "https://skinsmonkey.com/*",
+    "https://discord.com/*",
+    "https://discordapp.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "Open Skin Watcher",
+    "default_icon": {
+      "16": "assets/skinwatcher.png",
+      "32": "assets/skinwatcher.png",
+      "48": "assets/skinwatcher.png",
+      "128": "assets/skinwatcher.png"
+    }
+  },
+  "icons": {
+    "16": "assets/skinwatcher.png",
+    "32": "assets/skinwatcher.png",
+    "48": "assets/skinwatcher.png",
+    "128": "assets/skinwatcher.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://pirateswap.com/*"],
+      "js": ["src/pirateswap-page-bridge.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://pirateswap.com/*"],
+      "js": ["src/common.js", "src/pirateswap-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://skinsmonkey.com/*"],
+      "js": ["src/common.js", "src/skinsmonkey-content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
